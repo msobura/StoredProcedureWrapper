@@ -1,0 +1,89 @@
+﻿<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ assembly name="$(ProjectDir)\$(OutDir)\StoredProcedureWrapper.DatabaseHelper.dll" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="StoredProcedureWrapper.DatabaseHelper" #>
+<#@ output extension=".generated.cs" #>
+<#
+    const string connectionString = "Server=localhost;Database=StoredProcedureWrapper;Trusted_Connection=True;";
+
+    var databaseHelper = new DatabaseHelper(connectionString);
+    var storedProcedures = databaseHelper.GetStoredProcedures();
+    var schemas = storedProcedures.OrderBy(p => p.SchemaName).Select(p => p.SchemaName).Distinct();
+
+    Func<StoredProcedureParameter, string> toMethodParameterString = ParameterConverter.ToMethodParameterString;
+    Func<StoredProcedureParameter, string> toDynamicParameterString = ParameterConverter.ToDynamicParameterString;
+#>
+using System;
+using System.Data;
+using Dapper;
+
+namespace StoredProcedureWrapper.Sample
+{
+    public partial class Database
+    {
+        private class StoredProcedureContext
+        {
+            public string FullName { get; private set; }
+            public DynamicParameters Parameters { get; private set; }
+            public CommandType CommandType
+            {
+                get { return CommandType.StoredProcedure; }
+            }
+            
+            public StoredProcedureContext(string schemaName, string procedureName, DynamicParameters parameters)
+            {
+                FullName = String.Format("[{0}].[{1}]", schemaName, procedureName);
+                Parameters = parameters;
+            }
+        }
+
+<#
+    foreach(var schema in schemas)
+    {
+#>
+        <# WriteLine(String.Format("private static class {0}", schema)); #>
+        {
+<#
+        foreach (var sp in storedProcedures.Where(sp => sp.SchemaName.Equals(schema)))
+        {
+#>
+            // Procedure <# WriteLine(String.Format("{0}.{1}", sp.SchemaName, sp.Name)); #>
+<#
+            if (sp.Parameters.Any())
+            {
+#>
+            // <# WriteLine(String.Format("Parameter{0}:", sp.Parameters.Count() > 1 ? "s" : String.Empty)); #>
+            // <# WriteLine("Name, Type, MaxLength, IsOutput"); #>
+<#
+                foreach (var p in sp.Parameters)
+                {
+#>
+            // - <# WriteLine(String.Format("{0}, {1}, {2}, {3}", p.Name, p.SqlTypeName, p.MaxLength, p.IsOutput)); #>
+<#
+                }
+            }
+#>
+            <# WriteLine(String.Format("public static StoredProcedureContext {0}({1})", sp.Name, String.Join(", ", sp.Parameters.Select(toMethodParameterString)))); #>
+            {
+                var p = new DynamicParameters();
+<#
+                foreach (var p in sp.Parameters)
+                {
+#>
+                <# WriteLine(String.Format("p.Add({0});", toDynamicParameterString(p))); #>
+<#
+                }
+#>
+
+                return <# WriteLine(String.Format("new StoredProcedureContext(\"{0}\", \"{1}\", p);", schema, sp.Name)); #>
+            }
+<#
+        }
+#>
+        }
+<#
+    }
+#>
+    }
+}
